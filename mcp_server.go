@@ -94,9 +94,15 @@ func (s MCPServer) Tools() []Tool {
 
 // mcpServerFromDefinitions builds an MCPServer from the internal MCP tool
 // definitions, which are the single source of truth shared with the MCP
-// server registration.
-func mcpServerFromDefinitions() MCPServer {
+// server registration. Pull request tools are listed when pullRequests is
+// true.
+func mcpServerFromDefinitions(pullRequests bool) MCPServer {
 	defs := mcpinternal.ToolDefinitions()
+	instructions := mcpinternal.ServerInstructions()
+	if pullRequests {
+		defs = append(defs, mcpinternal.PullRequestToolDefinitions()...)
+		instructions += mcpinternal.PullRequestInstructions()
+	}
 	result := make([]Tool, len(defs))
 	for i, def := range defs {
 		defParams := def.Params()
@@ -106,5 +112,5 @@ func mcpServerFromDefinitions() MCPServer {
 		}
 		result[i] = NewTool(def.Name(), def.Description(), params)
 	}
-	return NewMCPServer(mcpinternal.ServerInstructions(), result)
+	return NewMCPServer(instructions, result)
 }

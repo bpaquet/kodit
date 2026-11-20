@@ -67,6 +67,10 @@ func TestEnvDefaults_MatchConfigDefaults(t *testing.T) {
 	assert.Equal(t, DefaultPeriodicSyncInterval, cfg.PeriodicSync.IntervalSeconds, "IntervalSeconds struct tag default should match DefaultPeriodicSyncInterval")
 	assert.Equal(t, DefaultPeriodicSyncRetries, cfg.PeriodicSync.RetryAttempts, "RetryAttempts struct tag default should match DefaultPeriodicSyncRetries")
 
+	// Pull request defaults
+	assert.False(t, cfg.PullRequests.Enabled, "pull request indexing is off by default")
+	assert.Equal(t, DefaultPullRequestFullSyncInterval, cfg.PullRequests.FullSyncIntervalSeconds, "FullSyncIntervalSeconds struct tag default should match DefaultPullRequestFullSyncInterval")
+
 	// Remote defaults
 	assert.Equal(t, DefaultRemoteTimeout.Seconds(), cfg.Remote.Timeout, "Remote.Timeout struct tag default should match DefaultRemoteTimeout")
 	assert.Equal(t, DefaultRemoteMaxRetries, cfg.Remote.MaxRetries, "Remote.MaxRetries struct tag default should match DefaultRemoteMaxRetries")
@@ -162,6 +166,20 @@ func TestLoadFromEnv_PeriodicSync(t *testing.T) {
 	assert.False(t, cfg.PeriodicSync.Enabled)
 	assert.Equal(t, 3600.0, cfg.PeriodicSync.IntervalSeconds)
 	assert.Equal(t, 5, cfg.PeriodicSync.RetryAttempts)
+}
+
+func TestLoadFromEnv_PullRequests(t *testing.T) {
+	clearEnvVars(t)
+
+	t.Setenv("GITHUB_PULL_REQUESTS_ENABLED", "true")
+	t.Setenv("GITHUB_PULL_REQUESTS_FULL_SYNC_INTERVAL_SECONDS", "86400")
+
+	envCfg, err := LoadFromEnv()
+	require.NoError(t, err)
+
+	cfg := envCfg.ToAppConfig().PullRequests()
+	assert.True(t, cfg.Enabled())
+	assert.Equal(t, 24*time.Hour, cfg.FullSyncInterval())
 }
 
 func TestLoadFromEnv_Remote(t *testing.T) {
@@ -483,6 +501,8 @@ func clearEnvVars(t *testing.T) {
 		"PERIODIC_SYNC_ENABLED",
 		"PERIODIC_SYNC_INTERVAL_SECONDS",
 		"PERIODIC_SYNC_RETRY_ATTEMPTS",
+		"GITHUB_PULL_REQUESTS_ENABLED",
+		"GITHUB_PULL_REQUESTS_FULL_SYNC_INTERVAL_SECONDS",
 		"REMOTE_SERVER_URL",
 		"REMOTE_API_KEY",
 		"REMOTE_TIMEOUT",

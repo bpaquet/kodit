@@ -17,6 +17,7 @@ import (
 
 	"github.com/helixml/kodit/application/service"
 	"github.com/helixml/kodit/domain/enrichment"
+	"github.com/helixml/kodit/domain/pullrequest"
 	"github.com/helixml/kodit/domain/repository"
 	"github.com/helixml/kodit/domain/search"
 	"github.com/helixml/kodit/domain/sourcelocation"
@@ -113,6 +114,7 @@ type Server struct {
 	fileLister         FileLister
 	files              FileFinder
 	grepper            Grepper
+	pullRequests       pullrequest.Searcher
 	scope              *repoScope
 	version            string
 	logger             zerolog.Logger
@@ -169,6 +171,13 @@ func WithTextRendering(diskPaths DiskPathResolver, textRenderers *extraction.Tex
 	}
 }
 
+// WithPullRequests enables the pull request tools.
+func WithPullRequests(pullRequests pullrequest.Searcher) ServerOption {
+	return func(s *Server) {
+		s.pullRequests = pullRequests
+	}
+}
+
 // NewServer creates a new MCP server with the given dependencies.
 func NewServer(
 	repositories RepositoryLister,
@@ -210,12 +219,17 @@ func NewServer(
 		s.scope.apply(s)
 	}
 
+	serverInstructions := instructions
+	if s.pullRequests != nil {
+		serverInstructions += pullRequestInstructions
+	}
+
 	mcpServer := server.NewMCPServer(
 		"kodit",
 		"1.0.0",
 		server.WithToolCapabilities(true),
 		server.WithResourceCapabilities(false, false),
-		server.WithInstructions(instructions),
+		server.WithInstructions(serverInstructions),
 	)
 
 	s.registerTools(mcpServer)
@@ -246,8 +260,16 @@ func (s *Server) registerTools(mcpServer *server.MCPServer) {
 		"kodit_read_resource":      s.handleReadResource,
 		"kodit_ls":                 s.handleLs,
 	}
+	if s.pullRequests != nil {
+		handlers["kodit_pull_request_search"] = s.handlePullRequestSearch
+		handlers["kodit_pull_request"] = s.handleGetPullRequest
+	}
 
-	for _, def := range tools() {
+	definitions := tools()
+	if s.pullRequests != nil {
+		definitions = append(definitions, pullRequestTools()...)
+	}
+	for _, def := range definitions {
 		handler, ok := handlers[def.name]
 		if !ok {
 			continue

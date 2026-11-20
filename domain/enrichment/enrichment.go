@@ -38,6 +38,7 @@ const (
 // History subtypes.
 const (
 	SubtypeCommitDescription Subtype = "commit_description"
+	SubtypePullRequest       Subtype = "pull_request"
 )
 
 // Usage subtypes.

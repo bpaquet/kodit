@@ -16,6 +16,7 @@ import (
 
 	"github.com/helixml/kodit/application/service"
 	"github.com/helixml/kodit/domain/enrichment"
+	"github.com/helixml/kodit/domain/pullrequest"
 	"github.com/helixml/kodit/domain/repository"
 	"github.com/helixml/kodit/domain/search"
 	"github.com/helixml/kodit/domain/sourcelocation"
@@ -319,6 +320,38 @@ func (l worldFileLister) ListFiles(_ context.Context, repoID int64, _ string) ([
 	return []service.FileEntry{{Path: path, Size: 1}}, nil
 }
 
+// worldPullRequests serves one pull request per repository; repository B's
+// carries the marker. An empty repoIDs list means every repository, as the
+// real searcher does.
+type worldPullRequests struct{ w *twoRepoWorld }
+
+func (p worldPullRequests) hit(repoID int64) pullrequest.Hit {
+	title, url := "repo A change", repoAURL
+	if repoID == repoBID {
+		title, url = markerB, repoBURL
+	}
+	pr := pullrequest.ReconstructPullRequest(repoID, repoID, 1, repoID, title, url+"/pull/1",
+		pullrequest.StateMerged, "alice", "", time.Time{}, time.Time{}, time.Time{}, time.Time{})
+	return pullrequest.NewHit(pr, url, title, 1)
+}
+
+func (p worldPullRequests) Search(_ context.Context, _ string, _ int, repoIDs []int64) ([]pullrequest.Hit, error) {
+	if len(repoIDs) == 0 {
+		repoIDs = []int64{repoAID, repoBID}
+	}
+	var out []pullrequest.Hit
+	for _, id := range repoIDs {
+		p.w.touch(id, "pullRequests.Search")
+		out = append(out, p.hit(id))
+	}
+	return out, nil
+}
+
+func (p worldPullRequests) Get(_ context.Context, repoID int64, _ int) (pullrequest.Hit, error) {
+	p.w.touch(repoID, "pullRequests.Get")
+	return p.hit(repoID), nil
+}
+
 // newWorldServer builds a server over both repositories with every optional
 // read mode and visual search enabled.
 func newWorldServer(w *twoRepoWorld, opts ...ServerOption) *Server {
@@ -332,6 +365,7 @@ func newWorldServer(w *twoRepoWorld, opts ...ServerOption) *Server {
 	all := append([]ServerOption{
 		WithRasterization(worldDiskPaths{w: w}, rasterizers),
 		WithTextRendering(worldDiskPaths{w: w}, textRenderers),
+		WithPullRequests(worldPullRequests{w: w}),
 	}, opts...)
 
 	return NewServer(
@@ -420,6 +454,13 @@ func repositoryBProbes() []probe {
 		m, p = toolCall(tool.name, map[string]any{tool.queryArg: "anything", "source_repo": repoBURL})
 		add(tool.name+"/source_repo B", m, p)
 	}
+
+	m, p = toolCall("kodit_pull_request_search", map[string]any{"keywords": "anything"})
+	add("kodit_pull_request_search/no source_repo", m, p)
+	m, p = toolCall("kodit_pull_request_search", map[string]any{"keywords": "anything", "source_repo": repoBURL})
+	add("kodit_pull_request_search/source_repo B", m, p)
+	m, p = toolCall("kodit_pull_request", map[string]any{"repo_url": repoBURL, "number": 1})
+	add("kodit_pull_request/repo B", m, p)
 
 	m, p = toolCall("kodit_grep", map[string]any{"repo_url": repoBURL, "pattern": "x"})
 	add("kodit_grep/repo B", m, p)

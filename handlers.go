@@ -11,6 +11,7 @@ import (
 	commithandler "github.com/helixml/kodit/application/handler/commit"
 	enrichmenthandler "github.com/helixml/kodit/application/handler/enrichment"
 	indexinghandler "github.com/helixml/kodit/application/handler/indexing"
+	prhandler "github.com/helixml/kodit/application/handler/pullrequest"
 	repohandler "github.com/helixml/kodit/application/handler/repository"
 	"github.com/helixml/kodit/application/service"
 	"github.com/helixml/kodit/domain/enrichment"
@@ -25,8 +26,19 @@ func (c *Client) registerHandlers() error {
 	c.registry.Register(task.OperationCloneRepository, repohandler.NewClone(
 		c.repoStores.Repositories, c.gitInfra.Cloner, c.queue, c.enrichCtx.Tracker, c.logger,
 	))
+	var followUps []task.Operation
+	if c.PullRequests != nil {
+		h, err := prhandler.NewSync(
+			c.pullRequestSync.stores, c.pullRequestSync.source, c.PullRequests, c.pullRequestSync.fullSyncInterval, c.enrichCtx.Tracker, c.logger,
+		)
+		if err != nil {
+			return fmt.Errorf("pull request sync handler: %w", err)
+		}
+		c.registry.Register(task.OperationSyncPullRequests, h)
+		followUps = append(followUps, task.OperationSyncPullRequests)
+	}
 	c.registry.Register(task.OperationSyncRepository, repohandler.NewSync(
-		c.repoStores.Repositories, c.repoStores.Branches, c.gitInfra.Cloner, c.gitInfra.Scanner, c.queue, c.Pipelines, c.enrichCtx.Tracker, c.logger,
+		c.repoStores.Repositories, c.repoStores.Branches, c.gitInfra.Cloner, c.gitInfra.Scanner, c.queue, c.Pipelines, followUps, c.enrichCtx.Tracker, c.logger,
 	))
 	c.registry.Register(task.OperationDeleteRepository, repohandler.NewDelete(
 		c.repoStores, c.Enrichments, c.queue, c.enrichCtx.Tracker, c.logger,

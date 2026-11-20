@@ -97,6 +97,9 @@ func (a *APIServer) mountRoutes(router chi.Router) {
 	if c.Rasterizers() != nil {
 		mcpOpts = append(mcpOpts, mcpinternal.WithRasterization(c.Blobs, c.Rasterizers()))
 	}
+	if c.PullRequests != nil {
+		mcpOpts = append(mcpOpts, mcpinternal.WithPullRequests(c.PullRequests))
+	}
 	mcpSrv := mcpinternal.NewServer(c.Repositories, c.Commits, c.Enrichments, c.Blobs, c.Search, c.Search, c.Search, c.Enrichments, c.Blobs, c.Files, c.Grep, "1.0.0", a.logger, mcpOpts...)
 	httpHandler := server.NewStreamableHTTPServer(mcpSrv.MCPServer())
 	router.Mount("/mcp", httpHandler)

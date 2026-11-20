@@ -16,18 +16,22 @@ import (
 const (
 	sqliteBM25Table = "kodit_bm25_documents"
 
+	// SQLitePullRequestBM25Table holds the BM25 documents of pull requests,
+	// kept apart from file documents so each index keeps its own statistics.
+	SQLitePullRequestBM25Table = "kodit_pull_request_bm25_documents"
+
 	sqliteCreateFTS5Table = `
-CREATE VIRTUAL TABLE IF NOT EXISTS kodit_bm25_documents USING fts5(
+CREATE VIRTUAL TABLE IF NOT EXISTS %s USING fts5(
     snippet_id UNINDEXED,
     passage,
     tokenize='porter ascii'
 )`
 
 	sqliteInsertQuery = `
-INSERT INTO kodit_bm25_documents (rowid, snippet_id, passage)
+INSERT INTO %s (rowid, snippet_id, passage)
 VALUES (?, ?, ?)`
 
-	sqliteMaxRowIDQuery = `SELECT COALESCE(MAX(rowid), 0) FROM kodit_bm25_documents`
+	sqliteMaxRowIDQuery = `SELECT COALESCE(MAX(rowid), 0) FROM %s`
 )
 
 // ErrSQLiteBM25InitializationFailed indicates SQLite FTS5 initialization failed.
@@ -60,26 +64,33 @@ func (sqliteBM25Mapper) ToModel(r search.Result) SQLiteBM25Model {
 // SQLiteBM25Store implements search.Store using SQLite FTS5.
 type SQLiteBM25Store struct {
 	database.Repository[search.Result, SQLiteBM25Model]
+	table     string
 	logger    zerolog.Logger
 	nextRowID int64
 }
 
-// NewSQLiteBM25Store creates a new SQLiteBM25Store, eagerly initializing
-// the FTS5 table and row ID counter.
+// NewSQLiteBM25Store creates the SQLiteBM25Store of file documents.
 func NewSQLiteBM25Store(db database.Database, logger zerolog.Logger) (*SQLiteBM25Store, error) {
+	return NewSQLiteBM25StoreForTable(db, sqliteBM25Table, logger)
+}
+
+// NewSQLiteBM25StoreForTable creates a SQLiteBM25Store backed by the given
+// FTS5 table, eagerly initializing the table and row ID counter.
+func NewSQLiteBM25StoreForTable(db database.Database, table string, logger zerolog.Logger) (*SQLiteBM25Store, error) {
 	s := &SQLiteBM25Store{
-		Repository: database.NewRepository[search.Result, SQLiteBM25Model](db, sqliteBM25Mapper{}, "bm25 document"),
+		Repository: database.NewRepositoryForTable[search.Result, SQLiteBM25Model](db, sqliteBM25Mapper{}, "bm25 document", table),
+		table:      table,
 		logger:     logger,
 	}
 
 	ctx := context.Background()
 
-	if err := s.DB(ctx).Exec(sqliteCreateFTS5Table).Error; err != nil {
+	if err := s.DB(ctx).Exec(fmt.Sprintf(sqliteCreateFTS5Table, table)).Error; err != nil {
 		return nil, errors.Join(ErrSQLiteBM25InitializationFailed, fmt.Errorf("create fts5 table: %w", err))
 	}
 
 	var maxRowID int64
-	if err := s.DB(ctx).Raw(sqliteMaxRowIDQuery).Scan(&maxRowID).Error; err != nil {
+	if err := s.DB(ctx).Raw(fmt.Sprintf(sqliteMaxRowIDQuery, s.table)).Scan(&maxRowID).Error; err != nil {
 		return nil, errors.Join(ErrSQLiteBM25InitializationFailed, fmt.Errorf("read max rowid: %w", err))
 	}
 	s.nextRowID = maxRowID + 1
@@ -103,8 +114,8 @@ func (s *SQLiteBM25Store) Find(ctx context.Context, opts ...repository.Option) (
 	}
 
 	augmented := []repository.Option{
-		repository.WithSelect("snippet_id, bm25(kodit_bm25_documents) AS score"),
-		repository.WithWhere("kodit_bm25_documents MATCH ?", escapeFTS5Query(query)),
+		repository.WithSelect(fmt.Sprintf("snippet_id, bm25(%s) AS score", s.table)),
+		repository.WithWhere(fmt.Sprintf("%s MATCH ?", s.table), escapeFTS5Query(query)),
 		repository.WithRawOrder("score ASC"),
 		repository.WithLimit(limit),
 	}
@@ -127,11 +138,12 @@ func (s *SQLiteBM25Store) Index(ctx context.Context, docs []search.Document) err
 		return nil
 	}
 
+	insert := fmt.Sprintf(sqliteInsertQuery, s.table)
 	return s.DB(ctx).Transaction(func(tx *gorm.DB) error {
 		for _, doc := range toIndex {
 			rowID := s.nextRowID
 			s.nextRowID++
-			if err := tx.Exec(sqliteInsertQuery, rowID, doc.SnippetID(), doc.Text()).Error; err != nil {
+			if err := tx.Exec(insert, rowID, doc.SnippetID(), doc.Text()).Error; err != nil {
 				return err
 			}
 		}

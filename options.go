@@ -45,6 +45,7 @@ type clientConfig struct {
 	enrichmentParallelism     int
 	enricherParallelism       int
 	periodicSync              config.PeriodicSyncConfig
+	pullRequests              config.PullRequestsConfig
 	chunkParams               chunking.ChunkParams
 	closers                   []io.Closer
 
@@ -67,6 +68,7 @@ func newClientConfig() *clientConfig {
 		enrichmentParallelism: 1,
 		enricherParallelism:   1,
 		periodicSync:          config.NewPeriodicSyncConfig(),
+		pullRequests:          config.NewPullRequestsConfig(),
 		chunkParams:           chunking.DefaultChunkParams(),
 		prescribedOpsFactory:  task.DefaultPrescribedOperations,
 	}
@@ -252,6 +254,13 @@ func WithSkipProviderValidation() Option {
 func WithLocalGitRepositories() Option {
 	return func(c *clientConfig) {
 		c.allowLocalGitRepositories = true
+	}
+}
+
+// WithPullRequestsConfig sets the GitHub pull request indexing configuration.
+func WithPullRequestsConfig(cfg config.PullRequestsConfig) Option {
+	return func(c *clientConfig) {
+		c.pullRequests = cfg
 	}
 }
 

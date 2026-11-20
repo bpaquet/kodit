@@ -17,11 +17,16 @@ import (
 const (
 	vchordBM25Table = "vectorchord_bm25_documents"
 
+	// VectorChordPullRequestBM25Table holds the BM25 documents of pull
+	// requests, kept apart from file documents so each index keeps its own
+	// statistics.
+	VectorChordPullRequestBM25Table = "vectorchord_pull_request_bm25_documents"
+
 	createPGTokenizer = `CREATE EXTENSION IF NOT EXISTS pg_tokenizer CASCADE`
 	createVChordBM25  = `CREATE EXTENSION IF NOT EXISTS vchord_bm25 CASCADE`
 
 	createBM25Table = `
-CREATE TABLE IF NOT EXISTS vectorchord_bm25_documents (
+CREATE TABLE IF NOT EXISTS %s (
     id SERIAL PRIMARY KEY,
     snippet_id VARCHAR(255) NOT NULL,
     passage TEXT NOT NULL,
@@ -30,8 +35,8 @@ CREATE TABLE IF NOT EXISTS vectorchord_bm25_documents (
 )`
 
 	createBM25Index = `
-CREATE INDEX IF NOT EXISTS vectorchord_bm25_documents_idx
-ON vectorchord_bm25_documents
+CREATE INDEX IF NOT EXISTS %s_idx
+ON %s
 USING bm25 (embedding bm25_ops)`
 
 	tokenizerExistsQuery = `SELECT 1 FROM tokenizer_catalog.tokenizer WHERE name = 'bert'`
@@ -53,7 +58,7 @@ stemmer = "english_porter2"
 $$)`
 
 	bm25UpdateEmbeddingsQuery = `
-UPDATE vectorchord_bm25_documents
+UPDATE %s
 SET embedding = tokenize(passage, 'bert')
 WHERE embedding IS NULL`
 )
@@ -91,14 +96,21 @@ func (vchordBM25Mapper) ToModel(r search.Result) VchordBM25Model {
 // VectorChordBM25Store implements search.Store using VectorChord PostgreSQL extension.
 type VectorChordBM25Store struct {
 	database.Repository[search.Result, VchordBM25Model]
+	table  string
 	logger zerolog.Logger
 }
 
-// NewVectorChordBM25Store creates a new VectorChordBM25Store, eagerly initializing
-// extensions, tokenizer, and tables.
+// NewVectorChordBM25Store creates the VectorChordBM25Store of file documents.
 func NewVectorChordBM25Store(db database.Database, logger zerolog.Logger) (*VectorChordBM25Store, error) {
+	return NewVectorChordBM25StoreForTable(db, vchordBM25Table, logger)
+}
+
+// NewVectorChordBM25StoreForTable creates a VectorChordBM25Store backed by
+// the given table, eagerly initializing extensions, tokenizer, and tables.
+func NewVectorChordBM25StoreForTable(db database.Database, table string, logger zerolog.Logger) (*VectorChordBM25Store, error) {
 	s := &VectorChordBM25Store{
-		Repository: database.NewRepository[search.Result, VchordBM25Model](db, vchordBM25Mapper{}, "bm25 document"),
+		Repository: database.NewRepositoryForTable[search.Result, VchordBM25Model](db, vchordBM25Mapper{}, "bm25 document", table),
+		table:      table,
 		logger:     logger,
 	}
 
@@ -155,10 +167,10 @@ func (s *VectorChordBM25Store) createTokenizerIfNotExists(ctx context.Context) e
 func (s *VectorChordBM25Store) createTables(ctx context.Context) error {
 	db := s.DB(ctx)
 
-	if err := db.Exec(createBM25Table).Error; err != nil {
+	if err := db.Exec(fmt.Sprintf(createBM25Table, s.table)).Error; err != nil {
 		return fmt.Errorf("create bm25 table: %w", err)
 	}
-	if err := db.Exec(createBM25Index).Error; err != nil {
+	if err := db.Exec(fmt.Sprintf(createBM25Index, s.table, s.table)).Error; err != nil {
 		return fmt.Errorf("create bm25 index: %w", err)
 	}
 	return nil
@@ -179,7 +191,7 @@ func (s *VectorChordBM25Store) Find(ctx context.Context, opts ...repository.Opti
 	}
 
 	augmented := []repository.Option{
-		repository.WithSelect("snippet_id, embedding <&> to_bm25query('vectorchord_bm25_documents_idx', tokenize(?, 'bert')) AS score", query),
+		repository.WithSelect(fmt.Sprintf("snippet_id, embedding <&> to_bm25query('%s_idx', tokenize(?, 'bert')) AS score", s.table), query),
 		repository.WithRawOrder("score ASC"),
 		repository.WithLimit(limit),
 	}
@@ -206,7 +218,7 @@ func (s *VectorChordBM25Store) Index(ctx context.Context, docs []search.Document
 		if err := s.batchInsert(tx, toIndex); err != nil {
 			return err
 		}
-		return tx.Exec(bm25UpdateEmbeddingsQuery).Error
+		return tx.Exec(fmt.Sprintf(bm25UpdateEmbeddingsQuery, s.table)).Error
 	})
 }
 
@@ -216,7 +228,7 @@ func (s *VectorChordBM25Store) batchInsert(tx *gorm.DB, documents []search.Docum
 		batch := documents[start:end]
 
 		var b strings.Builder
-		b.WriteString("INSERT INTO vectorchord_bm25_documents (snippet_id, passage, embedding) VALUES ")
+		fmt.Fprintf(&b, "INSERT INTO %s (snippet_id, passage, embedding) VALUES ", s.table)
 		args := make([]any, 0, len(batch)*2)
 		for i, doc := range batch {
 			if i > 0 {

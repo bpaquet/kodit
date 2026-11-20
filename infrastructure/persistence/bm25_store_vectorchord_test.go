@@ -86,3 +86,50 @@ func TestVectorChordBM25Store_Integration(t *testing.T) {
 		assert.NotEqual(t, "vc-bm25-1", r.SnippetID(), "deleted document should not appear in results")
 	}
 }
+
+// TestVectorChordBM25Store_PullRequestTableIsIndependent checks that the pull
+// request BM25 table has its own documents and index.
+//
+// Skipped when VECTORCHORD_TEST_URL is not set.
+func TestVectorChordBM25Store_PullRequestTableIsIndependent(t *testing.T) {
+	dsn := os.Getenv("VECTORCHORD_TEST_URL")
+	if dsn == "" {
+		t.Skip("VECTORCHORD_TEST_URL not set — start vectorchord-clean via docker compose")
+	}
+
+	ctx := context.Background()
+
+	db, err := database.NewDatabase(ctx, dsn)
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	files, err := NewVectorChordBM25Store(db, zerolog.Nop())
+	require.NoError(t, err)
+	prs, err := NewVectorChordBM25StoreForTable(db, VectorChordPullRequestBM25Table, zerolog.Nop())
+	require.NoError(t, err)
+
+	require.NoError(t, files.Index(ctx, []search.Document{search.NewDocument("vc-pr-file", "kubernetes controller reconciles pods")}))
+	require.NoError(t, prs.Index(ctx, []search.Document{search.NewDocument("vc-pr-doc", "kubernetes rationale for the controller")}))
+	defer func() {
+		_ = files.DeleteBy(ctx, search.WithSnippetIDs([]string{"vc-pr-file"}))
+		_ = prs.DeleteBy(ctx, search.WithSnippetIDs([]string{"vc-pr-doc"}))
+	}()
+
+	fileHits, err := files.Find(ctx, search.WithQuery("kubernetes"), repository.WithLimit(100))
+	require.NoError(t, err)
+	prHits, err := prs.Find(ctx, search.WithQuery("kubernetes"), repository.WithLimit(100))
+	require.NoError(t, err)
+
+	fileIDs := map[string]bool{}
+	for _, r := range fileHits {
+		fileIDs[r.SnippetID()] = true
+	}
+	prIDs := map[string]bool{}
+	for _, r := range prHits {
+		prIDs[r.SnippetID()] = true
+	}
+	assert.True(t, fileIDs["vc-pr-file"])
+	assert.False(t, fileIDs["vc-pr-doc"], "pull request documents must not appear in file search")
+	assert.True(t, prIDs["vc-pr-doc"])
+	assert.False(t, prIDs["vc-pr-file"], "file documents must not appear in pull request search")
+}

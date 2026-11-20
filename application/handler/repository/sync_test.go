@@ -77,6 +77,12 @@ func (f *fakeResolver) Operations(_ context.Context, _ int64) ([]task.Operation,
 
 func newSyncHandler(t *testing.T, scanner *fakeScanner) (*Sync, persistence.RepositoryStore, persistence.BranchStore) {
 	t.Helper()
+	h, repoStore, branchStore, _ := newSyncHandlerWithFollowUps(t, scanner, nil)
+	return h, repoStore, branchStore
+}
+
+func newSyncHandlerWithFollowUps(t *testing.T, scanner *fakeScanner, followUps []task.Operation) (*Sync, persistence.RepositoryStore, persistence.BranchStore, persistence.TaskStore) {
+	t.Helper()
 	db := testdb.New(t)
 	logger := zerolog.New(os.Stdout).Level(zerolog.ErrorLevel)
 
@@ -92,11 +98,12 @@ func newSyncHandler(t *testing.T, scanner *fakeScanner) (*Sync, persistence.Repo
 		scanner,
 		queue,
 		&fakeResolver{},
+		followUps,
 		&fakeSyncTrackerFactory{},
 		logger,
 	)
 
-	return h, repoStore, branchStore
+	return h, repoStore, branchStore, taskStore
 }
 
 func TestSync_SetsDefaultTrackingConfigWhenMissing(t *testing.T) {
@@ -153,4 +160,51 @@ func TestSync_PreservesExistingTrackingConfig(t *testing.T) {
 	updated, err := repoStore.FindOne(ctx, repository.WithID(repo.ID()))
 	require.NoError(t, err)
 	assert.Equal(t, "develop", updated.TrackingConfig().Branch())
+}
+
+func savedSyncRepo(t *testing.T, repoStore persistence.RepositoryStore) repository.Repository {
+	t.Helper()
+	repo, err := repository.NewRepository("https://example.com/test/repo.git")
+	require.NoError(t, err)
+	repo = repo.WithWorkingCopy(repository.NewWorkingCopy("/tmp/clone", "https://example.com/test/repo.git"))
+	repo = repo.WithPipelineID(1)
+	repo, err = repoStore.Save(context.Background(), repo)
+	require.NoError(t, err)
+	return repo
+}
+
+func TestSync_EnqueuesFollowUpsForRepository(t *testing.T) {
+	ctx := context.Background()
+	scanner := &fakeScanner{branches: []repository.Branch{repository.NewBranch(1, "main", "abc123", true)}}
+	h, repoStore, _, taskStore := newSyncHandlerWithFollowUps(t, scanner, []task.Operation{task.OperationSyncPullRequests})
+	repo := savedSyncRepo(t, repoStore)
+
+	require.NoError(t, h.Execute(ctx, map[string]any{"repository_id": repo.ID()}))
+
+	tasks, err := taskStore.Find(ctx)
+	require.NoError(t, err)
+	var followUp *task.Task
+	for i := range tasks {
+		if tasks[i].Operation() == task.OperationSyncPullRequests {
+			followUp = &tasks[i]
+		}
+	}
+	require.NotNil(t, followUp, "expected a pull request sync task")
+	assert.EqualValues(t, repo.ID(), followUp.Payload()["repository_id"])
+	assert.Equal(t, int(task.PriorityBackground)+10, followUp.Priority())
+}
+
+func TestSync_WithoutFollowUpsEnqueuesOnlyCommitScans(t *testing.T) {
+	ctx := context.Background()
+	scanner := &fakeScanner{branches: []repository.Branch{repository.NewBranch(1, "main", "abc123", true)}}
+	h, repoStore, _, taskStore := newSyncHandlerWithFollowUps(t, scanner, nil)
+	repo := savedSyncRepo(t, repoStore)
+
+	require.NoError(t, h.Execute(ctx, map[string]any{"repository_id": repo.ID()}))
+
+	tasks, err := taskStore.Find(ctx)
+	require.NoError(t, err)
+	for _, tk := range tasks {
+		assert.NotEqual(t, task.OperationSyncPullRequests, tk.Operation())
+	}
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/helixml/kodit"
 	"github.com/helixml/kodit/application/service"
+	"github.com/helixml/kodit/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -195,4 +196,55 @@ func TestWithDataDir_CreatesDirectory(t *testing.T) {
 	info, err := os.Stat(dataDir)
 	require.NoError(t, err)
 	assert.True(t, info.IsDir())
+}
+
+func toolNames(client *kodit.Client) map[string]bool {
+	names := map[string]bool{}
+	for _, tool := range client.MCPServer.Tools() {
+		names[tool.Name()] = true
+	}
+	return names
+}
+
+func TestNew_PullRequestsDisabledByDefault(t *testing.T) {
+	client, err := kodit.New(
+		kodit.WithSQLite(filepath.Join(t.TempDir(), "test.db")),
+		kodit.WithSkipProviderValidation(),
+		kodit.WithWorkerPollPeriod(unitTestPollPeriod),
+	)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, client.Close()) }()
+
+	assert.Nil(t, client.PullRequests)
+	assert.False(t, toolNames(client)["kodit_pull_request_search"])
+}
+
+func TestNew_PullRequestsEnabled(t *testing.T) {
+	client, err := kodit.New(
+		kodit.WithSQLite(filepath.Join(t.TempDir(), "test.db")),
+		kodit.WithSkipProviderValidation(),
+		kodit.WithWorkerPollPeriod(unitTestPollPeriod),
+		kodit.WithPullRequestsConfig(config.NewPullRequestsConfig().WithEnabled(true)),
+	)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, client.Close()) }()
+
+	require.NotNil(t, client.PullRequests)
+	names := toolNames(client)
+	assert.True(t, names["kodit_pull_request_search"])
+	assert.True(t, names["kodit_pull_request"])
+
+	hits, err := client.PullRequests.Search(context.Background(), "anything", 10, nil)
+	require.NoError(t, err)
+	assert.Empty(t, hits)
+}
+
+func TestNew_PullRequestsRejectsNonPositiveFullSyncInterval(t *testing.T) {
+	_, err := kodit.New(
+		kodit.WithSQLite(filepath.Join(t.TempDir(), "test.db")),
+		kodit.WithSkipProviderValidation(),
+		kodit.WithWorkerPollPeriod(unitTestPollPeriod),
+		kodit.WithPullRequestsConfig(config.NewPullRequestsConfig().WithEnabled(true).WithFullSyncIntervalSeconds(0)),
+	)
+	assert.Error(t, err)
 }

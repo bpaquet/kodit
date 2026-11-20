@@ -33,6 +33,7 @@ type Enrichment struct {
 	textEmbeddingStore   search.Store
 	visionEmbeddingStore search.Store
 	lineRangeStore       sourcelocation.Store
+	indexes              []search.Store
 }
 
 // NewEnrichment creates a new Enrichment service.
@@ -44,6 +45,7 @@ func NewEnrichment(
 	textEmbeddingStore search.Store,
 	visionEmbeddingStore search.Store,
 	lineRangeStore sourcelocation.Store,
+	indexes ...search.Store,
 ) *Enrichment {
 	return &Enrichment{
 		Collection:           repository.NewCollection[enrichment.Enrichment](enrichmentStore),
@@ -54,6 +56,7 @@ func NewEnrichment(
 		textEmbeddingStore:   textEmbeddingStore,
 		visionEmbeddingStore: visionEmbeddingStore,
 		lineRangeStore:       lineRangeStore,
+		indexes:              indexes,
 	}
 }
 
@@ -151,6 +154,11 @@ func (s *Enrichment) DeleteBy(ctx context.Context, opts ...repository.Option) er
 		if s.visionEmbeddingStore != nil {
 			if err := s.visionEmbeddingStore.DeleteBy(ctx, searchOpts...); err != nil {
 				return fmt.Errorf("delete vision embeddings: %w", err)
+			}
+		}
+		for _, index := range s.indexes {
+			if err := index.DeleteBy(ctx, searchOpts...); err != nil {
+				return fmt.Errorf("delete search index entries: %w", err)
 			}
 		}
 	}

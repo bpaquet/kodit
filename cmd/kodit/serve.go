@@ -60,6 +60,10 @@ Environment variables:
   PERIODIC_SYNC_ENABLED        Enable periodic sync (default: true)
   PERIODIC_SYNC_INTERVAL_SECONDS  Sync interval (default: 1800)
 
+  GITHUB_PULL_REQUESTS_ENABLED     Index pull requests of GitHub repositories,
+                                   using the token in each remote URL (default: false)
+  GITHUB_PULL_REQUESTS_FULL_SYNC_INTERVAL_SECONDS  Re-fetch every pull request this often (default: 604800)
+
   REMOTE_SERVER_URL            Remote Kodit server URL
   REMOTE_API_KEY               Remote server API key
 
@@ -126,6 +130,8 @@ func runServe(envFile, host string, port int) error {
 
 	// Configure periodic sync
 	opts = append(opts, kodit.WithPeriodicSyncConfig(cfg.PeriodicSync()))
+
+	opts = append(opts, kodit.WithPullRequestsConfig(cfg.PullRequests()))
 
 	// Skip provider validation if explicitly disabled (for testing)
 	if cfg.SkipProviderValidation() {

@@ -98,6 +98,9 @@ func (s repoScope) apply(srv *Server) {
 	if srv.visualSearch != nil {
 		srv.visualSearch = &scopedVisualSearch{inner: srv.visualSearch, scope: s}
 	}
+	if srv.pullRequests != nil {
+		srv.pullRequests = &scopedPullRequests{inner: srv.pullRequests, scope: s}
+	}
 }
 
 // scopedRepositories restricts repository lookups to the scope.

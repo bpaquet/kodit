@@ -203,3 +203,40 @@ type TaskStatusModel struct {
 func (TaskStatusModel) TableName() string {
 	return "task_status"
 }
+
+// PullRequestModel represents an indexed pull request in the database.
+type PullRequestModel struct {
+	ID             int64           `gorm:"primaryKey;autoIncrement"`
+	RepoID         int64           `gorm:"column:repo_id;uniqueIndex:idx_pull_requests_repo_number"`
+	Repo           RepositoryModel `gorm:"foreignKey:RepoID;references:ID;constraint:OnDelete:CASCADE"`
+	Number         int             `gorm:"column:number;uniqueIndex:idx_pull_requests_repo_number"`
+	EnrichmentID   int64           `gorm:"column:enrichment_id;index"`
+	Title          string          `gorm:"column:title;type:text"`
+	URL            string          `gorm:"column:url;size:1024"`
+	State          string          `gorm:"column:state;size:32"`
+	Author         string          `gorm:"column:author;size:255"`
+	MergeCommitSHA string          `gorm:"column:merge_commit_sha;size:64"`
+	OpenedAt       time.Time       `gorm:"column:opened_at"`
+	HostUpdatedAt  time.Time       `gorm:"column:host_updated_at"`
+	MergedAt       *time.Time      `gorm:"column:merged_at"`
+	SyncedAt       time.Time       `gorm:"column:synced_at"`
+}
+
+// TableName returns the table name.
+func (PullRequestModel) TableName() string {
+	return "pull_requests"
+}
+
+// PullRequestCursorModel records pull request sync progress per repository.
+type PullRequestCursorModel struct {
+	RepoID        int64           `gorm:"column:repo_id;primaryKey;autoIncrement:false"`
+	Repo          RepositoryModel `gorm:"foreignKey:RepoID;references:ID;constraint:OnDelete:CASCADE"`
+	Watermark     *time.Time      `gorm:"column:watermark"`
+	FullSyncedAt  *time.Time      `gorm:"column:full_synced_at"`
+	FullStartedAt *time.Time      `gorm:"column:full_started_at"`
+}
+
+// TableName returns the table name.
+func (PullRequestCursorModel) TableName() string {
+	return "pull_request_cursors"
+}

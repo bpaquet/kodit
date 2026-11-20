@@ -72,6 +72,9 @@ type EnvConfig struct {
 	// PeriodicSync configures periodic repository syncing.
 	PeriodicSync PeriodicSyncEnv `envconfig:"PERIODIC_SYNC"`
 
+	// PullRequests configures indexing of GitHub pull requests.
+	PullRequests PullRequestsEnv `envconfig:"GITHUB_PULL_REQUESTS"`
+
 	// Remote configures remote server connection.
 	Remote RemoteEnv `envconfig:"REMOTE"`
 
@@ -188,6 +191,26 @@ type PeriodicSyncEnv struct {
 	RetryAttempts int `envconfig:"RETRY_ATTEMPTS" default:"3"`
 }
 
+// PullRequestsEnv holds environment configuration for GitHub pull request
+// indexing. The token of each repository is read from its remote URL.
+type PullRequestsEnv struct {
+	// Enabled controls whether pull requests of GitHub repositories are indexed.
+	// Env: GITHUB_PULL_REQUESTS_ENABLED (default: false)
+	Enabled bool `envconfig:"ENABLED" default:"false"`
+
+	// FullSyncIntervalSeconds is how often every pull request is re-fetched,
+	// to pick up edited comments and remove deleted pull requests.
+	// Env: GITHUB_PULL_REQUESTS_FULL_SYNC_INTERVAL_SECONDS (default: 604800)
+	FullSyncIntervalSeconds float64 `envconfig:"FULL_SYNC_INTERVAL_SECONDS" default:"604800"`
+}
+
+// ToPullRequestsConfig converts PullRequestsEnv to PullRequestsConfig.
+func (p PullRequestsEnv) ToPullRequestsConfig() PullRequestsConfig {
+	return NewPullRequestsConfig().
+		WithEnabled(p.Enabled).
+		WithFullSyncIntervalSeconds(p.FullSyncIntervalSeconds)
+}
+
 // RemoteEnv holds environment configuration for remote server.
 type RemoteEnv struct {
 	// ServerURL is the remote server URL.
@@ -293,6 +316,8 @@ func (e EnvConfig) ToAppConfig() AppConfig {
 
 	// Periodic sync config
 	cfg = applyOption(cfg, WithPeriodicSyncConfig(e.PeriodicSync.ToPeriodicSyncConfig()))
+
+	cfg = applyOption(cfg, WithPullRequestsConfig(e.PullRequests.ToPullRequestsConfig()))
 
 	// Remote config
 	if e.Remote.IsConfigured() {

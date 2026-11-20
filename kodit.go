@@ -64,7 +64,9 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/helixml/kodit/application/handler"
+	prhandler "github.com/helixml/kodit/application/handler/pullrequest"
 	"github.com/helixml/kodit/application/service"
+	"github.com/helixml/kodit/domain/pullrequest"
 	"github.com/helixml/kodit/domain/search"
 	domainservice "github.com/helixml/kodit/domain/service"
 	"github.com/helixml/kodit/domain/task"
@@ -72,6 +74,7 @@ import (
 	"github.com/helixml/kodit/infrastructure/enricher"
 	"github.com/helixml/kodit/infrastructure/extraction"
 	"github.com/helixml/kodit/infrastructure/git"
+	"github.com/helixml/kodit/infrastructure/github"
 	"github.com/helixml/kodit/infrastructure/persistence"
 	"github.com/helixml/kodit/infrastructure/provider"
 	"github.com/helixml/kodit/infrastructure/rasterization"
@@ -101,6 +104,9 @@ type Client struct {
 	Search       *service.Search
 	Grep         *service.Grep
 	Pipelines    *service.Pipeline
+	// PullRequests searches indexed GitHub pull requests. Nil unless pull
+	// request indexing is enabled.
+	PullRequests *service.PullRequests
 
 	// MCPServer describes the MCP server's tools and instructions.
 	MCPServer MCPServer
@@ -121,11 +127,12 @@ type Client struct {
 	gitInfra    handler.GitInfrastructure
 
 	// Application services (internal only)
-	bm25Service  *domainservice.BM25
-	queue        *service.Queue
-	worker       *service.Worker
-	periodicSync *service.PeriodicSync
-	registry     *service.Registry
+	bm25Service     *domainservice.BM25
+	queue           *service.Queue
+	worker          *service.Worker
+	periodicSync    *service.PeriodicSync
+	pullRequestSync pullRequestSyncDeps
+	registry        *service.Registry
 
 	// Document text extraction (internal)
 	documentText *extraction.DocumentText
@@ -356,7 +363,13 @@ func New(opts ...Option) (*Client, error) {
 	registry := service.NewRegistry()
 	queue = service.NewQueue(taskStore, logger)
 
-	enrichQSvc := service.NewEnrichment(enrichmentStore, associationStore, bm25Store, codeEmbeddingStore, textEmbeddingStore, visionEmbeddingStore, lineRangeStore)
+	pullRequestIndex, err := buildPullRequestIndex(cfg, db, logger)
+	if err != nil {
+		errClose := db.Close()
+		return nil, errors.Join(fmt.Errorf("pull request index: %w", err), errClose)
+	}
+
+	enrichQSvc := service.NewEnrichment(enrichmentStore, associationStore, bm25Store, codeEmbeddingStore, textEmbeddingStore, visionEmbeddingStore, lineRangeStore, pullRequestIndex)
 	trackingSvc := service.NewTracking(statusStore, taskStore)
 
 	// Create BM25 service for keyword search (always available)
@@ -509,7 +522,7 @@ func New(opts ...Option) (*Client, error) {
 	}
 
 	// Populate MCP server metadata
-	client.MCPServer = mcpServerFromDefinitions()
+	client.MCPServer = mcpServerFromDefinitions(cfg.pullRequests.Enabled())
 
 	// Initialize Pipeline service first — Repository depends on it as resolver.
 	client.Pipelines = service.NewPipeline(pipelineStore, stepStore, pipelineStepStore, stepDependencyStore, prescribedOps)
@@ -533,6 +546,19 @@ func New(opts ...Option) (*Client, error) {
 	client.Tracking = trackingSvc
 	client.Search = service.NewSearch(cfg.embeddingProvider, textEmbeddingStore, codeEmbeddingStore, bm25Store, client.visionEmbedder, visionEmbeddingStore, enrichmentStore, &client.closed, logger)
 	client.Grep = service.NewGrep(repoStore, commitStore, gitAdapter)
+	if cfg.pullRequests.Enabled() {
+		pullRequestStore := persistence.NewPullRequestStore(db)
+		client.PullRequests = service.NewPullRequests(pullRequestStore, enrichQSvc, associationStore, repoStore, pullRequestIndex)
+		client.pullRequestSync = pullRequestSyncDeps{
+			stores: prhandler.Stores{
+				Repositories: repoStore,
+				PullRequests: pullRequestStore,
+				Cursors:      persistence.NewPullRequestCursorStore(db),
+			},
+			source:           github.NewClient(),
+			fullSyncInterval: cfg.pullRequests.FullSyncInterval(),
+		}
+	}
 
 	// Register task handlers
 	if err := client.registerHandlers(); err != nil {
@@ -613,6 +639,27 @@ func (c *Client) TextRenderers() *extraction.TextRendererRegistry {
 // Rasterizers returns the document rasterization registry, or nil if unavailable.
 func (c *Client) Rasterizers() *rasterization.Registry {
 	return c.rasterizers
+}
+
+// pullRequestSyncDeps holds what the pull request sync handler needs. Its zero
+// value means pull request indexing is disabled.
+type pullRequestSyncDeps struct {
+	stores           prhandler.Stores
+	source           pullrequest.Source
+	fullSyncInterval time.Duration
+}
+
+// buildPullRequestIndex creates the BM25 store of pull requests. It is built
+// even when pull request indexing is disabled so deleting a repository still
+// removes pull requests indexed while it was enabled.
+func buildPullRequestIndex(cfg *clientConfig, db database.Database, logger zerolog.Logger) (search.Store, error) {
+	switch cfg.database {
+	case databaseSQLite:
+		return persistence.NewSQLiteBM25StoreForTable(db, persistence.SQLitePullRequestBM25Table, logger)
+	case databasePostgresVectorchord:
+		return persistence.NewVectorChordBM25StoreForTable(db, persistence.VectorChordPullRequestBM25Table, logger)
+	}
+	return nil, fmt.Errorf("unsupported database for pull request index")
 }
 
 // buildSearchStores creates the search stores based on config.

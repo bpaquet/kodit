@@ -175,6 +175,47 @@ func ToolDefinitions() []ToolDefinition {
 	return tools()
 }
 
+// pullRequestTools returns the tools registered when pull request indexing is
+// enabled.
+func pullRequestTools() []ToolDefinition {
+	return []ToolDefinition{
+		{
+			name:        "kodit_pull_request_search",
+			description: "Search GitHub pull requests with BM25 keyword search over their title, description, changed file paths, conversation, reviews and review threads. Use to find why a change was made, which pull request introduced something, or the history of a feature. Returns metadata and the start of each description; read one in full with kodit_pull_request.",
+			params: []ParamDefinition{
+				{name: "keywords", description: "Keywords to search for", typ: "string", required: true},
+				{name: "source_repo", description: "Filter by source repository URL", typ: "string"},
+				{name: "limit", description: "Maximum number of results (default 10, at most 100)", typ: "number"},
+			},
+		},
+		{
+			name:        "kodit_pull_request",
+			description: "Read a GitHub pull request in full: metadata, description, changed files, conversation, reviews and review threads.",
+			params: []ParamDefinition{
+				{name: "repo_url", description: "The remote URL of the repository", typ: "string", required: true},
+				{name: "number", description: "The pull request number", typ: "number", required: true},
+			},
+		},
+	}
+}
+
+// PullRequestToolDefinitions returns the MCP tool definitions that are only
+// available when pull request indexing is enabled.
+func PullRequestToolDefinitions() []ToolDefinition {
+	return pullRequestTools()
+}
+
+const pullRequestInstructions = "\n\n**Pull requests:**\n" +
+	"- kodit_pull_request_search() - Find GitHub pull requests by keywords in their title, " +
+	"description, changed files and discussion. Use it to learn why code changed.\n" +
+	"- kodit_pull_request() - Read a whole pull request with its discussion"
+
+// PullRequestInstructions returns the instructions appended when pull request
+// indexing is enabled.
+func PullRequestInstructions() string {
+	return pullRequestInstructions
+}
+
 // ServerInstructions returns the MCP server usage instructions.
 func ServerInstructions() string {
 	return instructions

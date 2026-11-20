@@ -24,11 +24,13 @@ type Sync struct {
 	scanner        domainservice.Scanner
 	queue          *service.Queue
 	resolver       handler.CommitOperationResolver
+	followUps      []task.Operation
 	trackerFactory handler.TrackerFactory
 	logger         zerolog.Logger
 }
 
-// NewSync creates a new Sync handler.
+// NewSync creates a new Sync handler. followUps are repository operations
+// queued at background priority after every sync.
 func NewSync(
 	repoStore repository.RepositoryStore,
 	branchStore repository.BranchStore,
@@ -36,6 +38,7 @@ func NewSync(
 	scanner domainservice.Scanner,
 	queue *service.Queue,
 	resolver handler.CommitOperationResolver,
+	followUps []task.Operation,
 	trackerFactory handler.TrackerFactory,
 	logger zerolog.Logger,
 ) *Sync {
@@ -46,6 +49,7 @@ func NewSync(
 		scanner:        scanner,
 		queue:          queue,
 		resolver:       resolver,
+		followUps:      followUps,
 		trackerFactory: trackerFactory,
 		logger:         logger,
 	}
@@ -128,6 +132,13 @@ func (h *Sync) Execute(ctx context.Context, payload map[string]any) error {
 	repo = repo.WithLastScannedAt(time.Now())
 	if _, err := h.repoStore.Save(ctx, repo); err != nil {
 		return fmt.Errorf("save last synced at: %w", err)
+	}
+
+	if len(h.followUps) > 0 {
+		payload := map[string]any{"repository_id": repoID}
+		if err := h.queue.EnqueueOperations(ctx, h.followUps, task.PriorityBackground, payload); err != nil {
+			return fmt.Errorf("enqueue follow-up operations: %w", err)
+		}
 	}
 
 	h.logger.Info().Int64("repo_id", repoID).Int("branches", len(branches)).Msg("repository synced successfully")

@@ -334,6 +334,37 @@ func (p PeriodicSyncConfig) WithRetryAttempts(attempts int) PeriodicSyncConfig {
 	return p
 }
 
+// DefaultPullRequestFullSyncInterval is how often, in seconds, pull request
+// syncing re-fetches every pull request of a repository.
+const DefaultPullRequestFullSyncInterval = 604800.0
+
+// PullRequestsConfig configures indexing of GitHub pull requests.
+type PullRequestsConfig struct {
+	enabled                 bool
+	fullSyncIntervalSeconds float64
+}
+
+// NewPullRequestsConfig creates a disabled PullRequestsConfig with defaults.
+func NewPullRequestsConfig() PullRequestsConfig {
+	return PullRequestsConfig{fullSyncIntervalSeconds: DefaultPullRequestFullSyncInterval}
+}
+
+func (p PullRequestsConfig) Enabled() bool { return p.enabled }
+
+func (p PullRequestsConfig) FullSyncInterval() time.Duration {
+	return time.Duration(p.fullSyncIntervalSeconds * float64(time.Second))
+}
+
+func (p PullRequestsConfig) WithEnabled(enabled bool) PullRequestsConfig {
+	p.enabled = enabled
+	return p
+}
+
+func (p PullRequestsConfig) WithFullSyncIntervalSeconds(seconds float64) PullRequestsConfig {
+	p.fullSyncIntervalSeconds = seconds
+	return p
+}
+
 // RemoteConfig configures remote server connection.
 type RemoteConfig struct {
 	serverURL  string
@@ -424,6 +455,7 @@ type AppConfig struct {
 	enrichmentEndpoint        *Endpoint
 	visionEmbeddingEndpoint   *Endpoint
 	periodicSync              PeriodicSyncConfig
+	pullRequests              PullRequestsConfig
 	apiKeys                   []string
 	remote                    RemoteConfig
 	reporting                 ReportingConfig
@@ -486,6 +518,7 @@ func NewAppConfig() AppConfig {
 		logFormat:        LogFormatPretty,
 		disableTelemetry: false,
 		periodicSync:     NewPeriodicSyncConfig(),
+		pullRequests:     NewPullRequestsConfig(),
 		apiKeys:          []string{},
 		remote:           NewRemoteConfig(),
 		reporting:        NewReportingConfig(),
@@ -540,6 +573,9 @@ func (c AppConfig) VisionEmbeddingEndpoint() *Endpoint { return c.visionEmbeddin
 
 // PeriodicSync returns the periodic sync config.
 func (c AppConfig) PeriodicSync() PeriodicSyncConfig { return c.periodicSync }
+
+// PullRequests returns the pull request indexing config.
+func (c AppConfig) PullRequests() PullRequestsConfig { return c.pullRequests }
 
 // APIKeys returns the configured API keys.
 func (c AppConfig) APIKeys() []string {
@@ -681,6 +717,11 @@ func WithPeriodicSyncConfig(p PeriodicSyncConfig) AppConfigOption {
 	return func(c *AppConfig) { c.periodicSync = p }
 }
 
+// WithPullRequestsConfig sets the pull request indexing config.
+func WithPullRequestsConfig(p PullRequestsConfig) AppConfigOption {
+	return func(c *AppConfig) { c.pullRequests = p }
+}
+
 // WithAPIKeys sets the API keys.
 func WithAPIKeys(keys []string) AppConfigOption {
 	return func(c *AppConfig) {
@@ -779,7 +820,8 @@ func (c AppConfig) LogConfig(event *zerolog.Event) *zerolog.Event {
 		Bool("skip_provider_validation", c.skipProviderValidation).
 		Bool("allow_local_git_repositories", c.allowLocalGitRepositories).
 		Bool("periodic_sync_enabled", c.periodicSync.Enabled()).
-		Dur("periodic_sync_interval", c.periodicSync.Interval())
+		Dur("periodic_sync_interval", c.periodicSync.Interval()).
+		Bool("github_pull_requests_enabled", c.pullRequests.Enabled())
 }
 
 func (c AppConfig) maskedDBURL() string {

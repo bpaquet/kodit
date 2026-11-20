@@ -24,6 +24,7 @@ const (
 	OperationDeleteRepository                        Operation = "kodit.repository.delete"
 	OperationCloneRepository                         Operation = "kodit.repository.clone"
 	OperationSyncRepository                          Operation = "kodit.repository.sync"
+	OperationSyncPullRequests                        Operation = "kodit.repository.sync_pull_requests"
 	OperationCommit                                  Operation = "kodit.commit"
 	OperationExtractSnippetsForCommit                Operation = "kodit.commit.extract_snippets"
 	OperationCreateBM25IndexForCommit                Operation = "kodit.commit.create_bm25_index"

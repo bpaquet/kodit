@@ -32,6 +32,9 @@ func newMCPHandler(client *Client, opts ...mcpinternal.ServerOption) http.Handle
 	if client.TextRenderers() != nil {
 		mcpOpts = append(mcpOpts, mcpinternal.WithTextRendering(client.Blobs, client.TextRenderers()))
 	}
+	if client.PullRequests != nil {
+		mcpOpts = append(mcpOpts, mcpinternal.WithPullRequests(client.PullRequests))
+	}
 	mcpOpts = append(mcpOpts, opts...)
 
 	srv := mcpinternal.NewServer(
